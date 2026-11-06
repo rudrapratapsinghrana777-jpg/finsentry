@@ -28,3 +28,7 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Project rules
+
+- Keep spending decisions in a pure, unit-tested budget rules module, separate from the page, so demo evaluations stay consistent and verifiable.
