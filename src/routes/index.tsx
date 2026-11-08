@@ -83,7 +83,7 @@ const startingTransactions: Transaction[] = [
 
 const categoryLabels: Record<PurchaseCategory, string> = {
   essential: "Essentials",
-  impulse: "Shopping",
+  impulse: "Extra expensive",
   food: "Food & dining",
   entertainment: "Entertainment",
 };
