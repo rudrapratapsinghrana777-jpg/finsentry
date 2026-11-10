@@ -22,12 +22,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  DEFAULT_SETTINGS,
   evaluatePurchase,
-  SAVINGS_GOAL,
-  SPEND_LIMIT,
-  TOTAL_BUDGET,
+  PURCHASE_CATEGORIES,
+  spendByCategory,
+  spendingCap,
+  validateSettings,
+  type BudgetSettings,
   type PurchaseCategory,
 } from "@/lib/budget-rules";
+import { Settings } from "lucide-react";
 
 type Transaction = {
   id: string;
@@ -118,7 +122,11 @@ export const Route = createFileRoute("/")({
 
 function SpendGuard() {
   const [transactions, setTransactions] = useState(startingTransactions);
-  const [view, setView] = useState<"overview" | "purchase">("overview");
+  const [view, setView] = useState<"overview" | "purchase" | "settings">("overview");
+  const [settings, setSettings] = useState<BudgetSettings>(DEFAULT_SETTINGS);
+  const SPEND_LIMIT = spendingCap(settings);
+  const TOTAL_BUDGET = settings.totalBudget;
+  const SAVINGS_GOAL = settings.savingsReserve;
   const [filter, setFilter] = useState<Filter>("all");
   const [itemName, setItemName] = useState("");
   const [amount, setAmount] = useState("");
@@ -133,6 +141,10 @@ function SpendGuard() {
         .reduce((total, transaction) => total + transaction.amount, 0),
     [transactions],
   );
+  const categoryTotals = useMemo(
+    () => spendByCategory(transactions.filter((t) => t.status === "APPROVED")),
+    [transactions],
+  );
   const remaining = Math.max(0, SPEND_LIMIT - totalSpent);
   const utilization = Math.min(100, (totalSpent / SPEND_LIMIT) * 100);
   const visibleTransactions = transactions.filter((transaction) => {
@@ -143,6 +155,7 @@ function SpendGuard() {
 
   const resetDemo = () => {
     setTransactions(startingTransactions);
+    setSettings(DEFAULT_SETTINGS);
     setFilter("all");
     setView("overview");
     setNotice("Sample activity restored.");
@@ -157,6 +170,8 @@ function SpendGuard() {
       currentSpend: totalSpent,
       amount: parsedAmount,
       category,
+      settings,
+      categorySpend: categoryTotals[category],
     });
     const transaction: Transaction = {
       id: `DEMO-${Date.now().toString().slice(-6)}`,
@@ -201,6 +216,16 @@ function SpendGuard() {
               onClick={() => setView("overview")}
             >
               Overview
+            </Button>
+            <Button
+              variant={view === "settings" ? "secondary" : "ghost"}
+              onClick={() => {
+                setNotice("");
+                setView("settings");
+              }}
+            >
+              <Settings aria-hidden="true" />
+              <span className="hidden sm:inline">Budget settings</span>
             </Button>
             <Button
               variant={view === "purchase" ? "default" : "outline"}
@@ -253,7 +278,17 @@ function SpendGuard() {
           </div>
         )}
 
-        {view === "purchase" ? (
+        {view === "settings" ? (
+          <SettingsForm
+            initial={settings}
+            onCancel={() => setView("overview")}
+            onSave={(next) => {
+              setSettings(next);
+              setNotice("Budget settings saved. New purchases use these rules.");
+              setView("overview");
+            }}
+          />
+        ) : view === "purchase" ? (
           <PurchaseForm
             itemName={itemName}
             amount={amount}
@@ -319,6 +354,39 @@ function SpendGuard() {
               <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-success" /> Approved spend</span>
                 <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-border" /> {currency(remaining)} available</span>
+              </div>
+            </section>
+
+            <section aria-labelledby="category-title" className="mt-5 border-y border-border bg-card px-5 py-5 md:px-7 md:py-6">
+              <h2 id="category-title" className="font-semibold">Spending by category</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Where your approved money went this month.</p>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                {PURCHASE_CATEGORIES.map((cat) => {
+                  const spent = categoryTotals[cat];
+                  const limit = settings.categoryLimits[cat];
+                  const base = limit || SPEND_LIMIT || 1;
+                  const pct = Math.min(100, (spent / base) * 100);
+                  return (
+                    <div key={cat}>
+                      <div className="flex items-baseline justify-between gap-2 text-sm">
+                        <span className="font-medium">{categoryLabels[cat]}</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {currency(spent)}
+                          {limit ? ` of ${currency(limit)}` : ""}
+                        </span>
+                      </div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={`h-full rounded-full ${limit && pct >= 90 ? "bg-warning" : "bg-primary"}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {limit ? `${pct.toFixed(0)}% of category limit` : `${pct.toFixed(0)}% of spending cap · no category limit`}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
             </section>
 
@@ -480,6 +548,106 @@ function PurchaseForm({
           <Button type="submit"><ShieldCheck aria-hidden="true" /> Check this purchase <ChevronRight aria-hidden="true" /></Button>
         </div>
         <p className="text-center text-xs text-muted-foreground">This test does not place an order or charge a payment method.</p>
+      </form>
+    </section>
+  );
+}
+
+function SettingsForm({
+  initial,
+  onCancel,
+  onSave,
+}: {
+  initial: BudgetSettings;
+  onCancel: () => void;
+  onSave: (settings: BudgetSettings) => void;
+}) {
+  const [budget, setBudget] = useState(String(initial.totalBudget));
+  const [reserve, setReserve] = useState(String(initial.savingsReserve));
+  const [limits, setLimits] = useState<Record<PurchaseCategory, string>>(() => {
+    const out = {} as Record<PurchaseCategory, string>;
+    for (const c of PURCHASE_CATEGORIES) out[c] = initial.categoryLimits[c] ? String(initial.categoryLimits[c]) : "";
+    return out;
+  });
+  const [override, setOverride] = useState(initial.essentialOverride);
+  const [error, setError] = useState("");
+
+  const draft: BudgetSettings = {
+    totalBudget: Number(budget),
+    savingsReserve: Number(reserve),
+    categoryLimits: Object.fromEntries(
+      PURCHASE_CATEGORIES.filter((c) => limits[c].trim() !== "").map((c) => [c, Number(limits[c])]),
+    ),
+    essentialOverride: override,
+  };
+  const cap = spendingCap(draft);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const problem = validateSettings(draft);
+    if (problem) return setError(problem);
+    onSave(draft);
+  };
+
+  return (
+    <section className="mx-auto max-w-3xl border border-border bg-card">
+      <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-5 md:px-7">
+        <div>
+          <p className="flex items-center gap-2 text-sm font-medium text-primary"><Settings aria-hidden="true" className="size-4" /> Your rules</p>
+          <h2 className="mt-2 text-2xl font-bold">Budget settings</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Set your monthly budget, savings reserve, and category limits.</p>
+        </div>
+        <Button variant="ghost" size="icon" aria-label="Close settings" onClick={onCancel}><X aria-hidden="true" /></Button>
+      </div>
+      <form onSubmit={submit} className="space-y-6 px-5 py-6 md:px-7">
+        <div className="grid gap-5 sm:grid-cols-2">
+          <label className="space-y-2 text-sm font-medium">
+            <span>Monthly budget (₹)</span>
+            <Input type="number" min="1" step="1" value={budget} onChange={(e) => setBudget(e.target.value)} required />
+          </label>
+          <label className="space-y-2 text-sm font-medium">
+            <span>Protected savings (₹)</span>
+            <Input type="number" min="0" step="1" value={reserve} onChange={(e) => setReserve(e.target.value)} required />
+          </label>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Spending cap: <span className="font-semibold text-foreground">{currency(cap)}</span> per month
+        </p>
+
+        <div>
+          <h3 className="text-sm font-semibold">Category limits</h3>
+          <p className="mt-1 text-xs text-muted-foreground">Leave empty for no limit.</p>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            {PURCHASE_CATEGORIES.map((c) => (
+              <label key={c} className="space-y-2 text-sm font-medium">
+                <span>{categoryLabels[c]}</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="No limit"
+                  value={limits[c]}
+                  onChange={(e) => setLimits((cur) => ({ ...cur, [c]: e.target.value }))}
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <label className="flex items-start gap-3 text-sm">
+          <input type="checkbox" className="mt-1 size-4 accent-primary" checked={override} onChange={(e) => setOverride(e.target.checked)} />
+          <span>
+            <span className="font-medium">Allow essential override</span>
+            <span className="block text-muted-foreground">Essentials can still be approved after the cap or their category limit is reached.</span>
+          </span>
+        </label>
+
+        {error && <p role="alert" className="border-l-4 border-danger bg-danger-soft px-4 py-3 text-sm">{error}</p>}
+
+        <div className="flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:justify-end">
+          <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
+          <Button type="submit"><Check aria-hidden="true" /> Save settings</Button>
+        </div>
       </form>
     </section>
   );
