@@ -102,13 +102,13 @@ const currency = (value: number) =>
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "SpendGuard — A smarter way to spend" },
+      { title: "FinSentry — A smarter way to spend" },
       {
         name: "description",
         content:
           "See how PayPal-powered spending guardrails protect your monthly budget and savings with clear, transparent purchase decisions.",
       },
-      { property: "og:title", content: "SpendGuard — A smarter way to spend" },
+      { property: "og:title", content: "FinSentry — A smarter way to spend" },
       {
         property: "og:description",
         content: "A transparent spending guard for your monthly budget and protected savings.",
@@ -206,7 +206,7 @@ function SpendGuard() {
               <ShieldCheck aria-hidden="true" className="size-5" />
             </span>
             <span>
-              <span className="block text-base font-bold">SpendGuard</span>
+              <span className="block text-base font-bold">FinSentry</span>
               <span className="block text-xs text-muted-foreground">PayPal commerce concept</span>
             </span>
           </a>
@@ -433,7 +433,7 @@ function SpendGuard() {
         )}
 
         <footer className="mt-8 flex flex-col gap-3 border-t border-border pt-5 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <span className="flex items-center gap-2"><ShieldCheck aria-hidden="true" className="size-4 text-primary" /> SpendGuard · Hackathon concept</span>
+          <span className="flex items-center gap-2"><ShieldCheck aria-hidden="true" className="size-4 text-primary" /> FinSentry · Hackathon concept</span>
           <span>Sample activity is stored only for this session.</span>
         </footer>
       </div>
