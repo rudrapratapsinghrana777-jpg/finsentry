@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -32,6 +33,7 @@ import {
   type PurchaseCategory,
 } from "@/lib/budget-rules";
 import { Settings } from "lucide-react";
+import { createPayPalOrder, capturePayPalOrder } from "@/lib/paypal.functions";
 
 type Transaction = {
   id: string;
@@ -45,6 +47,16 @@ type Transaction = {
 };
 
 type Filter = "all" | "approved" | "blocked";
+
+type PendingPurchase = {
+  orderId: string;
+  itemName: string;
+  amount: number;
+  category: PurchaseCategory;
+  justification?: string;
+};
+
+const pendingPayPalKey = "finsentry-pending-paypal";
 
 const startingTransactions: Transaction[] = [
   {
@@ -133,6 +145,10 @@ function SpendGuard() {
   const [category, setCategory] = useState<PurchaseCategory>("impulse");
   const [justification, setJustification] = useState("");
   const [notice, setNotice] = useState("");
+  const [checkoutPending, setCheckoutPending] = useState(false);
+  const captureStarted = useRef(false);
+  const createPayPalOrderFn = useServerFn(createPayPalOrder);
+  const capturePayPalOrderFn = useServerFn(capturePayPalOrder);
 
   const totalSpent = useMemo(
     () =>
@@ -161,7 +177,7 @@ function SpendGuard() {
     setNotice("Sample activity restored.");
   };
 
-  const submitPurchase = (event: FormEvent<HTMLFormElement>) => {
+  const submitPurchase = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const parsedAmount = Number(amount);
     if (!itemName.trim() || !Number.isFinite(parsedAmount) || parsedAmount <= 0) return;
@@ -173,6 +189,30 @@ function SpendGuard() {
       settings,
       categorySpend: categoryTotals[category],
     });
+
+    if (decision.approved) {
+      setCheckoutPending(true);
+      setNotice("Budget check passed. Opening PayPal sandbox checkout…");
+      try {
+        const order = await createPayPalOrderFn({
+          data: { itemName: itemName.trim(), amountInr: parsedAmount },
+        });
+        const pending: PendingPurchase = {
+          orderId: order.orderId,
+          itemName: itemName.trim(),
+          amount: parsedAmount,
+          category,
+          ...(justification.trim() ? { justification: justification.trim() } : {}),
+        };
+        window.sessionStorage.setItem(pendingPayPalKey, JSON.stringify(pending));
+        window.location.assign(order.approvalUrl);
+      } catch {
+        setCheckoutPending(false);
+        setNotice("PayPal could not start checkout. No payment was captured; please try again.");
+      }
+      return;
+    }
+
     const transaction: Transaction = {
       id: `DEMO-${Date.now().toString().slice(-6)}`,
       itemName: itemName.trim(),
@@ -193,9 +233,72 @@ function SpendGuard() {
     setAmount("");
     setCategory("impulse");
     setJustification("");
-    setNotice(decision.approved ? "Purchase approved by the demo rules." : "Purchase blocked by the demo rules.");
+    setNotice("Purchase blocked by the budget guardrail. No PayPal payment was started.");
     setView("overview");
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const checkoutResult = params.get("paypal");
+    if (!checkoutResult) return;
+
+    const clearCheckoutQuery = () => window.history.replaceState({}, "", window.location.pathname);
+    if (checkoutResult === "cancel") {
+      window.sessionStorage.removeItem(pendingPayPalKey);
+      setNotice("PayPal checkout was cancelled. No payment was captured.");
+      clearCheckoutQuery();
+      return;
+    }
+    if (checkoutResult !== "success" || captureStarted.current) return;
+
+    const orderId = params.get("token");
+    const saved = window.sessionStorage.getItem(pendingPayPalKey);
+    if (!orderId || !saved) {
+      setNotice("This PayPal checkout could not be matched to a purchase in this session.");
+      clearCheckoutQuery();
+      return;
+    }
+
+    let pending: PendingPurchase;
+    try {
+      const parsed: unknown = JSON.parse(saved);
+      if (typeof parsed !== "object" || parsed === null) throw new Error("Invalid pending purchase");
+      const candidate = parsed as Partial<PendingPurchase>;
+      if (
+        candidate.orderId !== orderId ||
+        typeof candidate.itemName !== "string" ||
+        typeof candidate.amount !== "number" ||
+        typeof candidate.category !== "string"
+      ) throw new Error("Pending purchase did not match");
+      pending = candidate as PendingPurchase;
+    } catch {
+      setNotice("This PayPal checkout could not be matched to a purchase in this session.");
+      clearCheckoutQuery();
+      return;
+    }
+
+    captureStarted.current = true;
+    void capturePayPalOrderFn({ data: { orderId } }).then((captured) => {
+      const transaction: Transaction = {
+        id: captured.captureId || captured.orderId,
+        itemName: pending.itemName,
+        amount: pending.amount,
+        category: pending.category,
+        status: "APPROVED",
+        reason: `Paid in PayPal sandbox for ${currency(pending.amount)}. USD checkout amount: $${captured.amountUsd} at the ₹83/USD demo rate.`,
+        date: new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit" }).format(new Date()),
+        ...(pending.justification ? { justification: pending.justification } : {}),
+      };
+      setTransactions((current) => [transaction, ...current]);
+      setFilter("all");
+      setNotice("PayPal sandbox payment completed. Your activity now shows the INR budget amount.");
+      window.sessionStorage.removeItem(pendingPayPalKey);
+      clearCheckoutQuery();
+    }).catch(() => {
+      captureStarted.current = false;
+      setNotice("PayPal has not confirmed the payment. No completed purchase was added to activity.");
+    });
+  }, [capturePayPalOrderFn]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -264,8 +367,8 @@ function SpendGuard() {
         <div className="mb-6 flex items-start gap-3 border-y border-warning/30 bg-warning-soft px-4 py-3 text-sm text-foreground">
           <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
           <p>
-            <span className="font-semibold">Demo mode.</span> Decisions use transparent sample rules;
-            no PayPal payment is initiated or money moved.
+            <span className="font-semibold">PayPal sandbox.</span> Budgets and guardrails stay in INR;
+            approved checkouts convert at ₹83 per USD. Sandbox payments only.
           </p>
         </div>
 
@@ -300,6 +403,7 @@ function SpendGuard() {
             onJustificationChange={setJustification}
             onCancel={() => setView("overview")}
             onSubmit={submitPurchase}
+            isProcessing={checkoutPending}
           />
         ) : (
           <>
@@ -483,6 +587,7 @@ function PurchaseForm({
   onJustificationChange,
   onCancel,
   onSubmit,
+  isProcessing,
 }: {
   itemName: string;
   amount: string;
@@ -494,6 +599,7 @@ function PurchaseForm({
   onJustificationChange: (value: string) => void;
   onCancel: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  isProcessing: boolean;
 }) {
   return (
     <section className="mx-auto max-w-3xl border border-border bg-card">
@@ -545,9 +651,9 @@ function PurchaseForm({
         )}
         <div className="flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:justify-end">
           <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
-          <Button type="submit"><ShieldCheck aria-hidden="true" /> Check this purchase <ChevronRight aria-hidden="true" /></Button>
+          <Button type="submit" disabled={isProcessing}><ShieldCheck aria-hidden="true" /> {isProcessing ? "Opening PayPal…" : "Check budget & continue to PayPal"} {!isProcessing && <ChevronRight aria-hidden="true" />}</Button>
         </div>
-        <p className="text-center text-xs text-muted-foreground">This test does not place an order or charge a payment method.</p>
+        <p className="text-center text-xs text-muted-foreground">Only budget-approved purchases continue to PayPal sandbox checkout. INR amounts convert at ₹83 per USD.</p>
       </form>
     </section>
   );
