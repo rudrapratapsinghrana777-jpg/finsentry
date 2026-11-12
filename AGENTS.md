@@ -32,3 +32,4 @@ use the editor.
 ## Project rules
 
 - Keep spending decisions in a pure, unit-tested budget rules module, separate from the page, so demo evaluations stay consistent and verifiable.
+- Keep PayPal order creation and capture in server functions through the linked gateway; browser code must never receive payment credentials or capture funds directly.

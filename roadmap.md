@@ -1,0 +1,3 @@
+- [ ] Keep budget screens and guardrails in INR; convert PayPal checkout amounts to USD at ₹83/USD.
+- [ ] Wire approved purchases through PayPal sandbox order approval and server-side capture.
+- [ ] Add focused tests for the INR-to-USD conversion and verify preview checkout behavior.
