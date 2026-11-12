@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_SETTINGS,
+  convertInrToUsd,
+  DEMO_INR_PER_USD,
   evaluatePurchase,
   SAVINGS_GOAL,
   spendByCategory,
@@ -12,6 +14,12 @@ import {
 } from "@/lib/budget-rules";
 
 describe("monthly budget rules", () => {
+  it("keeps budget amounts in INR and converts PayPal checkout at ₹83 per USD", () => {
+    expect(DEMO_INR_PER_USD).toBe(83);
+    expect(convertInrToUsd(83)).toBe("1.00");
+    expect(convertInrToUsd(250)).toBe("3.01");
+  });
+
   it("sets a ₹30,000 budget, ₹20,000 spending cap, and ₹10,000 protected reserve", () => {
     expect(TOTAL_BUDGET).toBe(30_000);
     expect(SPEND_LIMIT).toBe(20_000);

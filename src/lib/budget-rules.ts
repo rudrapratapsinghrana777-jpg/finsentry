@@ -1,6 +1,12 @@
 export const TOTAL_BUDGET = 30_000;
 export const SPEND_LIMIT = 20_000;
 export const SAVINGS_GOAL = TOTAL_BUDGET - SPEND_LIMIT;
+export const DEMO_INR_PER_USD = 83;
+
+/** Converts INR input to a two-decimal USD amount for PayPal sandbox checkout. */
+export function convertInrToUsd(amountInr: number): string {
+  return (Math.round((amountInr / DEMO_INR_PER_USD) * 100) / 100).toFixed(2);
+}
 
 export type PurchaseCategory = "essential" | "impulse" | "food" | "entertainment";
 
@@ -88,7 +94,7 @@ export function evaluatePurchase({
   if (overridable && projectedSpend > cap) {
     return {
       approved: true,
-      reason: "Essential purchase approved by the override. This demo does not process a payment.",
+      reason: "Essential purchase approved by the override, even though it crosses the spending cap.",
     };
   }
 
